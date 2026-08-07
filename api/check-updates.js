@@ -207,10 +207,28 @@ function dataBucurestiStr() {
   return now.toLocaleDateString('sv-SE', { timeZone: 'Europe/Bucharest' }); // format YYYY-MM-DD
 }
 
+// Ruleaza cate 5 verificari simultan, in loc de una cate una, ca sa nu depaseasca limita de timp
+async function ruleazaInLoturi(items, marimeLot, fn) {
+  for (let i = 0; i < items.length; i += marimeLot) {
+    const lot = items.slice(i, i + marimeLot);
+    await Promise.all(lot.map(fn));
+  }
+}
+
+module.exports.config = { maxDuration: 60 };
+
 module.exports = async function handler(req, res) {
+  try {
   // Protectie simpla - doar cine stie parola poate declansa functia
   if (CRON_SECRET && req.query.secret !== CRON_SECRET) {
     return res.status(401).json({ ok: false, eroare: 'Neautorizat' });
+  }
+
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY || !ONESIGNAL_APP_ID || !ONESIGNAL_API_KEY) {
+    return res.status(200).json({ ok: false, eroare: 'Lipsesc variabile de mediu', detalii: {
+      SUPABASE_URL: !!SUPABASE_URL, SUPABASE_SERVICE_KEY: !!SUPABASE_SERVICE_KEY,
+      ONESIGNAL_APP_ID: !!ONESIGNAL_APP_ID, ONESIGNAL_API_KEY: !!ONESIGNAL_API_KEY
+    }});
   }
 
   const ora = oraBucuresti();
@@ -220,7 +238,7 @@ module.exports = async function handler(req, res) {
 
   const rows = await supaGet('stare_aplicatie?select=user_id,date');
   if (!Array.isArray(rows)) {
-    return res.status(500).json({ ok: false, eroare: 'Nu s-au putut citi datele din Supabase', detalii: rows });
+    return res.status(200).json({ ok: false, eroare: 'Nu s-au putut citi datele din Supabase', detalii: rows });
   }
 
   const azi = dataBucurestiStr();
@@ -234,14 +252,14 @@ module.exports = async function handler(req, res) {
     const termene = d.termene || [];
     let schimbat = false;
 
-    // --- 1. Verificare portal pentru termene/solutii noi ---
+    // --- 1. Verificare portal pentru termene/solutii noi (in loturi de 5, in paralel) ---
     const toate = dosare.concat(dosareLucru).filter(x => detInst(x.instanta));
     const now = new Date();
 
-    for (const dosar of toate) {
+    await ruleazaInLoturi(toate, 5, async (dosar) => {
       try {
         const rezultate = await apeleazaPortal({ metoda: 'CautareDosare', numarDosar: dosar.numar, institutie: detInst(dosar.instanta) });
-        if (!rezultate || !rezultate.length) continue;
+        if (!rezultate || !rezultate.length) return;
         for (const r of rezultate) {
           const sedinte = r.sedinte || [];
           for (const s of sedinte) {
@@ -270,7 +288,7 @@ module.exports = async function handler(req, res) {
       } catch (e) {
         console.error('Eroare verificare dosar ' + dosar.numar + ':', e.message);
       }
-    }
+    });
 
     // --- 2. Rezumat de dimineata (o singura data pe zi, doar in fereastra 08-10) ---
     if (ora >= 8 && ora < 10 && d.lastSummaryDate !== azi) {
@@ -297,4 +315,7 @@ module.exports = async function handler(req, res) {
   }
 
   return res.status(200).json({ ok: true, useriVerificati: rows.length, notificariTrimise: totalNotificari });
+  } catch (e) {
+    return res.status(200).json({ ok: false, eroare: e.message, stack: e.stack });
+  }
 };
