@@ -156,6 +156,11 @@ async function apeleazaPortal(body) {
   return j.result;
 }
 
+function textCaleAtac(cale) {
+  const m = { 'Apel': 'Apel declarat', 'Recurs': 'Recurs declarat', 'Contestatie': 'Contestatie declarata' };
+  return m[cale] || (cale + ' declarat(a)');
+}
+
 async function sendPush(externalId, title, message) {
   try {
     await fetch('https://onesignal.com/api/v1/notifications', {
@@ -308,8 +313,34 @@ module.exports = async function handler(req, res) {
       schimbat = true;
     }
 
+    // --- 3. Verificare apel pe dosare terminate (numar dosar ramane acelasi, se schimba instanta) ---
+    const dosareTerminate = d.dosareTerminate || [];
+    const candidatiApel = dosareTerminate.filter(x => x.caleAtac && x.caleAtac !== 'Niciuna' && !x.apelDetectat);
+    for (const dos of candidatiApel) {
+      try {
+        const rezultate = await apeleazaPortal({ metoda: 'CautareDosare', numarDosar: dos.numar, institutie: null });
+        if (rezultate && rezultate.length) {
+          for (const r of rezultate) {
+            const gasitInst = r.institutie || '';
+            if (gasitInst && normTxt(gasitInst).indexOf(normTxt(dos.instanta || '').slice(0,10)) === -1) {
+              dos.apelDetectat = true;
+              dos.apelInstanta = gasitInst;
+              schimbat = true;
+              totalNotificari++;
+              const txt = textCaleAtac(dos.caleAtac);
+              await sendPush(userId, '⚖️ ' + txt + ' - ' + dos.numar, 'Dosarul se afla acum la ' + gasitInst);
+              break;
+            }
+          }
+        }
+      } catch (e) {
+        console.error('Eroare verificare apel ' + dos.numar + ':', e.message);
+      }
+    }
+
     if (schimbat) {
       d.termene = termene;
+      d.dosareTerminate = dosareTerminate;
       await supaPatch(userId, d);
     }
   }
