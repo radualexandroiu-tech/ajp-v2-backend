@@ -161,8 +161,11 @@ function textCaleAtac(cale) {
   return m[cale] || (cale + ' declarat(a)');
 }
 
-async function sendPush(externalId, title, message) {
+const APP_BASE_URL = 'https://radualexandroiu-tech.github.io/ajp-v2/';
+
+async function sendPush(externalId, title, message, dosarId) {
   try {
+    const url = APP_BASE_URL + (dosarId ? ('?dosar=' + dosarId) : '');
     await fetch('https://onesignal.com/api/v1/notifications', {
       method: 'POST',
       headers: {
@@ -174,7 +177,8 @@ async function sendPush(externalId, title, message) {
         include_aliases: { external_id: [externalId] },
         target_channel: 'push',
         headings: { en: title },
-        contents: { en: message }
+        contents: { en: message },
+        url: url
       })
     });
   } catch (e) { console.error('Eroare trimitere push:', e); }
@@ -275,7 +279,7 @@ module.exports = async function handler(req, res) {
                 termene.push({ id: Date.now() + Math.random(), dosarId: dosar.id, dataOra: dt, tip: 'judecata', notite: s.complet ? 'Complet: ' + s.complet : '', sursa: 'portal.just.ro' });
                 schimbat = true;
                 totalNotificari++;
-                await sendPush(userId, '📅 Termen nou - ' + dosar.numar, fmtPortal(s.data) + (s.ora ? ' ora ' + s.ora : '') + (s.complet ? ' - ' + s.complet : ''));
+                await sendPush(userId, '📅 Termen nou - ' + dosar.numar, fmtPortal(s.data) + (s.ora ? ' ora ' + s.ora : '') + (s.complet ? ' - ' + s.complet : ''), dosar.id);
               }
             } else if (s.solutieSumar || s.solutie) {
               const dtS = isoToDT(s.data, s.ora);
@@ -285,7 +289,7 @@ module.exports = async function handler(req, res) {
                 termene[idx].solutie = sol;
                 schimbat = true;
                 totalNotificari++;
-                await sendPush(userId, '📋 Solutie noua - ' + dosar.numar, sol);
+                await sendPush(userId, '📋 Solutie noua - ' + dosar.numar, sol, dosar.id);
               }
             }
           }
@@ -302,11 +306,11 @@ module.exports = async function handler(req, res) {
       const termeneAzi = termene.filter(t => { const td = new Date(t.dataOra); return td >= today0 && td < tomorrow0; });
       const termeneMaine = termene.filter(t => { const td = new Date(t.dataOra); return td >= tomorrow0 && td < new Date(tomorrow0.getTime()+86400000); });
       if (termeneAzi.length) {
-        await sendPush(userId, '📅 ' + (termeneAzi.length===1?'Termen AZI':termeneAzi.length+' termene AZI'), termeneAzi.map(t => { const dos = toate.find(x=>x.id===t.dosarId); return dos ? dos.numar : 'dosar'; }).join(', '));
+        await sendPush(userId, '📅 ' + (termeneAzi.length===1?'Termen AZI':termeneAzi.length+' termene AZI'), termeneAzi.map(t => { const dos = toate.find(x=>x.id===t.dosarId); return dos ? dos.numar : 'dosar'; }).join(', '), termeneAzi.length===1 ? termeneAzi[0].dosarId : null);
         totalNotificari++;
       }
       if (termeneMaine.length) {
-        await sendPush(userId, '⏰ ' + (termeneMaine.length===1?'Termen MAINE':termeneMaine.length+' termene MAINE'), termeneMaine.map(t => { const dos = toate.find(x=>x.id===t.dosarId); return dos ? dos.numar : 'dosar'; }).join(', '));
+        await sendPush(userId, '⏰ ' + (termeneMaine.length===1?'Termen MAINE':termeneMaine.length+' termene MAINE'), termeneMaine.map(t => { const dos = toate.find(x=>x.id===t.dosarId); return dos ? dos.numar : 'dosar'; }).join(', '), termeneMaine.length===1 ? termeneMaine[0].dosarId : null);
         totalNotificari++;
       }
       d.lastSummaryDate = azi;
