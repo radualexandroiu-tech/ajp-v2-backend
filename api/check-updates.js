@@ -215,6 +215,10 @@ function dataBucurestiStr() {
   const now = new Date();
   return now.toLocaleDateString('sv-SE', { timeZone: 'Europe/Bucharest' }); // format YYYY-MM-DD
 }
+function dataBucurestiStrOffset(zile) {
+  const now = new Date(Date.now() + zile * 86400000);
+  return now.toLocaleDateString('sv-SE', { timeZone: 'Europe/Bucharest' });
+}
 
 // Ruleaza cate 5 verificari simultan, in loc de una cate una, ca sa nu depaseasca limita de timp
 async function ruleazaInLoturi(items, marimeLot, fn) {
@@ -299,10 +303,17 @@ module.exports = async function handler(req, res) {
       }
     });
 
-    // --- 2. Rezumat de dimineata (o singura data pe zi, doar in fereastra 08-10) ---
-    if (ora >= 8 && ora < 10 && d.lastSummaryDate !== azi) {
+    // --- 2. Rezumat de dimineata (o singura data pe zi, la PRIMA rulare din ziua respectiva) ---
+    // Nota: nu mai depindem de o fereastra stricta 08-10, ca sa nu se piarda rezumatul
+    // daca programarea cron (la cateva ore) nu nimereste exact acel interval. Oricum
+    // intreaga functie ruleaza doar intre 08:00-20:00, deci prima rulare a zilei e suficient de devreme.
+    if (d.lastSummaryDate !== azi) {
       const today0 = new Date(); today0.setHours(0,0,0,0);
       const tomorrow0 = new Date(today0.getTime() + 86400000);
+      const dosareUP = d.dosareUP || [];
+      const todosArr = d.todos || [];
+      const maine = dataBucurestiStrOffset(1);
+
       const termeneAzi = termene.filter(t => { const td = new Date(t.dataOra); return td >= today0 && td < tomorrow0; });
       const termeneMaine = termene.filter(t => { const td = new Date(t.dataOra); return td >= tomorrow0 && td < new Date(tomorrow0.getTime()+86400000); });
       if (termeneAzi.length) {
@@ -313,6 +324,31 @@ module.exports = async function handler(req, res) {
         await sendPush(userId, '⏰ ' + (termeneMaine.length===1?'Termen MAINE':termeneMaine.length+' termene MAINE'), termeneMaine.map(t => { const dos = toate.find(x=>x.id===t.dosarId); return dos ? dos.numar : 'dosar'; }).join(', '), termeneMaine.length===1 ? termeneMaine[0].dosarId : null);
         totalNotificari++;
       }
+
+      // --- Task-uri urgente din To-Do cu termen limita azi/maine (nu si cele de tip "concediu") ---
+      const todosAzi = todosArr.filter(t => !t.completed && t.prioritate !== 'concediu' && t.dataLimita && t.dataLimita.indexOf(azi) === 0);
+      const todosMaine = todosArr.filter(t => !t.completed && t.prioritate !== 'concediu' && t.dataLimita && t.dataLimita.indexOf(maine) === 0);
+      if (todosAzi.length) {
+        await sendPush(userId, '📝 ' + (todosAzi.length===1?'Task urgent AZI':todosAzi.length+' task-uri urgente AZI'), todosAzi.map(t => t.titlu).join(', '));
+        totalNotificari++;
+      }
+      if (todosMaine.length) {
+        await sendPush(userId, '📝 ' + (todosMaine.length===1?'Task urgent MAINE':todosMaine.length+' task-uri urgente MAINE'), todosMaine.map(t => t.titlu).join(', '));
+        totalNotificari++;
+      }
+
+      // --- Audieri UP azi/maine ---
+      const auAzi = dosareUP.filter(u => u.dataAudiere === azi);
+      const auMaine = dosareUP.filter(u => u.dataAudiere === maine);
+      if (auAzi.length) {
+        await sendPush(userId, '🔍 ' + (auAzi.length===1?'Audiere UP AZI':auAzi.length+' audieri UP AZI'), auAzi.map(u => u.numar).join(', '), auAzi.length===1 ? auAzi[0].id : null);
+        totalNotificari++;
+      }
+      if (auMaine.length) {
+        await sendPush(userId, '🔍 ' + (auMaine.length===1?'Audiere UP MAINE':auMaine.length+' audieri UP MAINE'), auMaine.map(u => u.numar).join(', '), auMaine.length===1 ? auMaine[0].id : null);
+        totalNotificari++;
+      }
+
       d.lastSummaryDate = azi;
       schimbat = true;
     }
