@@ -280,7 +280,7 @@ module.exports = async function handler(req, res) {
             if (new Date(s.data) >= now) {
               const exista = termene.some(t => t.dosarId === dosar.id && t.dataOra === dt);
               if (!exista) {
-                termene.push({ id: Date.now() + Math.random(), dosarId: dosar.id, dataOra: dt, tip: 'judecata', notite: s.complet ? 'Complet: ' + s.complet : '', sursa: 'portal.just.ro' });
+                termene.push({ id: Date.now() + Math.random(), dosarId: dosar.id, dataOra: dt, tip: 'judecata', notite: s.complet ? 'Complet: ' + s.complet : '', sursa: 'portal.just.ro', gasitLa: azi });
                 schimbat = true;
                 totalNotificari++;
                 await sendPush(userId, '📅 Termen nou - ' + dosar.numar, fmtPortal(s.data) + (s.ora ? ' ora ' + s.ora : '') + (s.complet ? ' - ' + s.complet : ''), dosar.id);
@@ -291,6 +291,7 @@ module.exports = async function handler(req, res) {
               if (idx !== -1) {
                 const sol = s.solutieSumar || s.solutie;
                 termene[idx].solutie = sol;
+                termene[idx].solutieGasitaLa = azi;
                 schimbat = true;
                 totalNotificari++;
                 await sendPush(userId, '📋 Solutie noua - ' + dosar.numar, sol, dosar.id);
