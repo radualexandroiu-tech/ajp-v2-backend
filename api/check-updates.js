@@ -166,7 +166,9 @@ const APP_BASE_URL = 'https://radualexandroiu-tech.github.io/ajp-v2/';
 async function sendPush(externalId, title, message, dosarId) {
   try {
     const url = APP_BASE_URL + (dosarId ? ('?dosar=' + dosarId) : '');
-    await fetch('https://onesignal.com/api/v1/notifications', {
+    // Nota: adresa corecta e api.onesignal.com (cea veche, onesignal.com/api/v1, e depreciata
+    // si nu mai trimitea nimic, fara nicio eroare vizibila).
+    const r = await fetch('https://api.onesignal.com/notifications', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -181,7 +183,30 @@ async function sendPush(externalId, title, message, dosarId) {
         url: url
       })
     });
-  } catch (e) { console.error('Eroare trimitere push:', e); }
+    const j = await r.json().catch(() => ({}));
+    // Un id gol (sau raspuns non-200) inseamna ca OneSignal NU a trimis nimic - logam clar ca sa se vada in Vercel.
+    if (!r.ok || !j.id) {
+      console.error('Push NEtrimis catre ' + externalId + ' (status ' + r.status + '): ' + JSON.stringify(j));
+      return false;
+    }
+    return true;
+  } catch (e) { console.error('Eroare trimitere push:', e); return false; }
+}
+
+// Adauga o inregistrare in Jurnalul de sincronizari (acelasi format ca addJurnal() din index.html),
+// pentru evenimentele descoperite automat de server (termen nou, solutie noua, apel detectat).
+// Fara aceasta, aceste descoperiri aparaeau doar ca push/pastila, dar nu si in tab-ul Jurnal.
+function pushJurnal(jurnal, tip, mesaj, dosarId, extra) {
+  jurnal.unshift({
+    id: Date.now() + Math.random(),
+    tip: tip,
+    mesaj: mesaj,
+    dosarId: dosarId || null,
+    extra: extra || null,
+    ts: new Date().toISOString(),
+    citit: false
+  });
+  if (jurnal.length > 100) jurnal.length = 100;
 }
 
 async function supaGet(path) {
@@ -263,6 +288,7 @@ module.exports = async function handler(req, res) {
     const dosare = d.dosare || [];
     const dosareLucru = d.dosareLucru || [];
     const termene = d.termene || [];
+    const jurnal = d.jurnal || [];
     let schimbat = false;
 
     // --- 1. Verificare portal pentru termene/solutii noi (in loturi de 5, in paralel) ---
@@ -283,6 +309,7 @@ module.exports = async function handler(req, res) {
                 termene.push({ id: Date.now() + Math.random(), dosarId: dosar.id, dataOra: dt, tip: 'judecata', notite: s.complet ? 'Complet: ' + s.complet : '', sursa: 'portal.just.ro', gasitLa: azi });
                 schimbat = true;
                 totalNotificari++;
+                pushJurnal(jurnal, 'termen-nou', 'Termen nou - ' + dosar.numar, dosar.id, fmtPortal(s.data) + (s.ora ? ' ora ' + s.ora : ''));
                 await sendPush(userId, '📅 Termen nou - ' + dosar.numar, fmtPortal(s.data) + (s.ora ? ' ora ' + s.ora : '') + (s.complet ? ' - ' + s.complet : ''), dosar.id);
               }
             } else if (s.solutieSumar || s.solutie) {
@@ -294,6 +321,7 @@ module.exports = async function handler(req, res) {
                 termene[idx].solutieGasitaLa = azi;
                 schimbat = true;
                 totalNotificari++;
+                pushJurnal(jurnal, 'solutie', 'Solutie noua - ' + dosar.numar, dosar.id, sol);
                 await sendPush(userId, '📋 Solutie noua - ' + dosar.numar, sol, dosar.id);
               }
             }
@@ -369,6 +397,7 @@ module.exports = async function handler(req, res) {
               schimbat = true;
               totalNotificari++;
               const txt = textCaleAtac(dos.caleAtac);
+              pushJurnal(jurnal, 'eroare', txt + ' - ' + dos.numar + ' se afla acum la ' + gasitInst, dos.id, null);
               await sendPush(userId, '⚖️ ' + txt + ' - ' + dos.numar, 'Dosarul se afla acum la ' + gasitInst);
               break;
             }
@@ -382,6 +411,7 @@ module.exports = async function handler(req, res) {
     if (schimbat) {
       d.termene = termene;
       d.dosareTerminate = dosareTerminate;
+      d.jurnal = jurnal;
       await supaPatch(userId, d);
     }
   }
